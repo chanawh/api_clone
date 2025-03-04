@@ -24,6 +24,17 @@ const TroubleshootForm = () => {
 
         setIsLoading(true);
         setError('');
+        let parsedPayload = {};
+
+        try {
+            if (payload) {
+                parsedPayload = JSON.parse(payload);
+            }
+        } catch (err) {
+            setError('Invalid JSON payload');
+            setIsLoading(false);
+            return;
+        }
 
         try {
             const response = await fetch('http://localhost:8000/troubleshoot/', {
@@ -31,7 +42,7 @@ const TroubleshootForm = () => {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ url, method, payload: JSON.parse(payload) }),
+                body: JSON.stringify({ url, method, payload: parsedPayload }),
             });
             const data = await response.json();
             setResult(data);
@@ -67,6 +78,9 @@ const TroubleshootForm = () => {
                 <select value={method} onChange={(e) => setMethod(e.target.value)}>
                     <option value="GET">GET</option>
                     <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="PATCH">PATCH</option>
                 </select>
                 <button type="submit" disabled={isLoading}>Test API</button>
             </form>
@@ -75,7 +89,11 @@ const TroubleshootForm = () => {
             {result && (
                 <div>
                     <h3>Result:</h3>
-                    <pre>{JSON.stringify(result, null, 2)}</pre>
+                    <p><strong>Status Code:</strong> {result.status_code}</p>
+                    <p><strong>Headers:</strong></p>
+                    <pre>{JSON.stringify(result.headers, null, 2)}</pre>
+                    <p><strong>Body:</strong></p>
+                    <pre>{JSON.stringify(result.body, null, 2)}</pre>
                     <button onClick={handleClear}>Clear Result</button>
                 </div>
             )}
