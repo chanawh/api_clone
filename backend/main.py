@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict
 from fastapi.middleware.cors import CORSMiddleware
 from enum import Enum
+from requests.auth import HTTPBasicAuth
 
 app = FastAPI()
 
@@ -22,27 +23,52 @@ class HTTPMethod(str, Enum):
     DELETE = "DELETE"
     PATCH = "PATCH"
 
+class AuthType(str, Enum):
+    API_KEY = "api_key"
+    BEARER = "bearer"
+    BASIC = "basic"
+    NONE = "none"
+
 class RequestBody(BaseModel):
     url: str
     method: HTTPMethod = HTTPMethod.GET
-    payload: Optional[Dict] = {}
+    payload: Optional[Dict] = None
+    headers: Optional[Dict[str, str]] = None  # Custom headers
+    auth_type: AuthType = AuthType.NONE
+    api_key: Optional[str] = None
+    bearer_token: Optional[str] = None
+    basic_auth: Optional[Dict[str, str]] = None  # {"username": "user", "password": "pass"}
 
-def send_test_request(url, method="GET", payload=None):
+def send_test_request(url, method="GET", payload=None, headers=None, auth_type=AuthType.NONE, api_key=None, bearer_token=None, basic_auth=None):
     try:
-        response = requests.request(method, url, json=payload, timeout=5)
+        # Initialize headers if None
+        headers = headers or {}
+
+        # Initialize auth as None by default
+        auth = None
+
+        # Add authentication headers based on auth_type
+        if auth_type == AuthType.API_KEY and api_key:
+            headers["Authorization"] = f"ApiKey {api_key}"
+        elif auth_type == AuthType.BEARER and bearer_token:
+            headers["Authorization"] = f"Bearer {bearer_token}"
+        elif auth_type == AuthType.BASIC and basic_auth:
+            auth = HTTPBasicAuth(basic_auth["username"], basic_auth["password"])
+
+        response = requests.request(method, url, json=payload, headers=headers, auth=auth, timeout=5)
         response.raise_for_status()
 
         try:
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
-                "body": response.json()
+                "body": response.json()  # Attempt to return JSON response
             }
         except ValueError:
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
-                "body": response.text
+                "body": response.text  # Return raw text if not JSON
             }
     
     except requests.Timeout:
@@ -50,17 +76,24 @@ def send_test_request(url, method="GET", payload=None):
     except requests.ConnectionError:
         return {"error": "Failed to connect to the server"}
     except requests.HTTPError as http_err:
-        return {"error": f"HTTP error occurred: {http_err}", "status_code": response.status_code}
+        # Handle case where `response` might be undefined due to error
+        status_code = response.status_code if 'response' in locals() else 'N/A'
+        return {"error": f"HTTP error occurred: {http_err}", "status_code": status_code}
     except requests.RequestException as e:
         return {"error": f"Request failed: {e}"}
 
 @app.post("/troubleshoot/")
 def troubleshoot_api(request: RequestBody):
-    url = request.url
-    method = request.method
-    payload = request.payload
-
-    result = send_test_request(url, method, payload)
+    result = send_test_request(
+        url=request.url,
+        method=request.method,
+        payload=request.payload,
+        headers=request.headers,
+        auth_type=request.auth_type,
+        api_key=request.api_key,
+        bearer_token=request.bearer_token,
+        basic_auth=request.basic_auth
+    )
 
     if "error" in result:
         error_message = result["error"]
