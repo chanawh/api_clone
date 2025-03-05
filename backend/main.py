@@ -5,12 +5,14 @@ from typing import Optional, Dict
 from fastapi.middleware.cors import CORSMiddleware
 from enum import Enum
 from requests.auth import HTTPBasicAuth
+from genson import SchemaBuilder  # Library for schema detection
 
 app = FastAPI()
 
+# Allow all origins, headers, and methods for CORS support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Use specific origins in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,25 +31,37 @@ class AuthType(str, Enum):
     BASIC = "basic"
     NONE = "none"
 
+# Request body definition using Pydantic
 class RequestBody(BaseModel):
     url: str
     method: HTTPMethod = HTTPMethod.GET
     payload: Optional[Dict] = None
-    headers: Optional[Dict[str, str]] = None  # Custom headers
+    headers: Optional[Dict[str, str]] = None
     auth_type: AuthType = AuthType.NONE
     api_key: Optional[str] = None
     bearer_token: Optional[str] = None
     basic_auth: Optional[Dict[str, str]] = None  # {"username": "user", "password": "pass"}
 
+# Detecting JSON schema from response data using the genson library
+def detect_schema(json_data):
+    builder = SchemaBuilder()
+    builder.add_object(json_data)
+    return builder.to_schema()
+
+# Detecting schema for headers (simple structure)
+def detect_header_schema(headers):
+    # Treat headers as key-value pairs of strings
+    builder = SchemaBuilder()
+    builder.add_object({key: "string" for key in headers.keys()})
+    return builder.to_schema()
+
+# Function to send API requests and capture the response
 def send_test_request(url, method="GET", payload=None, headers=None, auth_type=AuthType.NONE, api_key=None, bearer_token=None, basic_auth=None):
     try:
-        # Initialize headers if None
         headers = headers or {}
-
-        # Initialize auth as None by default
         auth = None
 
-        # Add authentication headers based on auth_type
+        # Set the appropriate authentication method
         if auth_type == AuthType.API_KEY and api_key:
             headers["Authorization"] = f"ApiKey {api_key}"
         elif auth_type == AuthType.BEARER and bearer_token:
@@ -55,33 +69,40 @@ def send_test_request(url, method="GET", payload=None, headers=None, auth_type=A
         elif auth_type == AuthType.BASIC and basic_auth:
             auth = HTTPBasicAuth(basic_auth["username"], basic_auth["password"])
 
-        response = requests.request(method, url, json=payload, headers=headers, auth=auth, timeout=5)
+        # Make the request to the provided URL
+        response = requests.request(method, url, json=payload, headers=headers, auth=auth, timeout=10)  # increased timeout to 10s
         response.raise_for_status()
 
+        # Try to detect JSON schema from the response body
         try:
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.json()  # Attempt to return JSON response
-            }
+            json_body = response.json()
+            schema = detect_schema(json_body)
         except ValueError:
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.text  # Return raw text if not JSON
-            }
+            json_body = response.text
+            schema = None  # No schema detected for non-JSON response
+
+        # Detect schema for headers
+        header_schema = detect_header_schema(response.headers)
+
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": json_body,
+            "schema": schema,
+            "header_schema": header_schema
+        }
     
     except requests.Timeout:
         return {"error": "Request timed out"}
     except requests.ConnectionError:
         return {"error": "Failed to connect to the server"}
     except requests.HTTPError as http_err:
-        # Handle case where `response` might be undefined due to error
         status_code = response.status_code if 'response' in locals() else 'N/A'
         return {"error": f"HTTP error occurred: {http_err}", "status_code": status_code}
     except requests.RequestException as e:
         return {"error": f"Request failed: {e}"}
 
+# Endpoint for troubleshooting API requests
 @app.post("/troubleshoot/")
 def troubleshoot_api(request: RequestBody):
     result = send_test_request(
